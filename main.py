@@ -2,7 +2,7 @@ import streamlit as st
 from langchain_helper import create_vectordb, get_response
 
 # For Streamlit
-__import__('pysqlite3')
+#__import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
