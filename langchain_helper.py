@@ -19,7 +19,7 @@ genai.configure(api_key="AIzaSyBk3ucs63Btg1VkEnY295uUTznxBmTP8dc")
 llm = genai.GenerativeModel(model_name="gemini-pro", generation_config=generation_config)
 
 # Vector Embedding
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=os.environ["GOOGLE_API_KEY"])
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=os.environ["AIzaSyBk3ucs63Btg1VkEnY295uUTznxBmTP8dc"])
 
 
 def create_vectordb():
