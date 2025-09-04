@@ -15,7 +15,7 @@ load_dotenv()
 generation_config = {
     "temperature": 0.75,
 }
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+genai.configure(api_key="AIzaSyBk3ucs63Btg1VkEnY295uUTznxBmTP8dc")
 llm = genai.GenerativeModel(model_name="gemini-pro", generation_config=generation_config)
 
 # Vector Embedding
