@@ -14,7 +14,7 @@ load_dotenv()
 generation_config = {
     "temperature": 0.75,
 }
-genai.configure(api_key=os.environ["AIzaSyBk3ucs63Btg1VkEnY295uUTznxBmTP8dc"])
+genai.configure(api_key=st.secrets["AIzaSyBk3ucs63Btg1VkEnY295uUTznxBmTP8dc"])
 llm = genai.GenerativeModel(model_name="gemini-pro", generation_config=generation_config)
 
 # Vector Embedding
