@@ -4,7 +4,7 @@
   
 An automated FAQ chatbot for an e-commerce platform.  
   
-**Live site: [ecommercefaq.streamlit.app](https://ecommercefaq.streamlit.app)**  
+**Live site: [ecommercefaq.streamlit.app](https://e-commercefaqchat-giorvkrducwdlzmcetqwxu.streamlit.app/)**  
   
 ## Technology Stack  
   
@@ -33,6 +33,6 @@ e.g. ***"How can I create an account?"*** or,\
   
 Any type of feedback is appreciated: ssshubham.147.sp@gmail.com
   
-![forthebadge made-by-soumya](https://img.shields.io/badge/CREATED_BY-SHUBHAM-blue)  
+![forthebadge made-by-shubham](https://img.shields.io/badge/CREATED_BY-SHUBHAM-blue)  
   
 ![forthebadge hosted-on-streamlit](https://img.shields.io/badge/HOSTED_ON-STREAMLIT-red)
