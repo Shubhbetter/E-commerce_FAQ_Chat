@@ -1,11 +1,17 @@
 import os
 from pathlib import Path
-import csv
-import sys
-import traceback
+from typing import List, Optional
 
 import streamlit as st
-from langchain.schema import Document
+
+# try to import langchain Document, fallback to simple local Document if not installed
+try:
+    from langchain_core.documents import Document
+except Exception:
+    class Document:
+        def __init__(self, page_content: str, metadata: Optional[dict] = None):
+            self.page_content = page_content
+            self.metadata = metadata or {}
 
 from langchain_helper import create_vectordb, get_response
 
@@ -13,17 +19,21 @@ ROOT = Path(__file__).parent
 CSV_PATH = ROOT / "Ecommerce_FAQs.csv"
 PERSIST_PATH = str(ROOT / "faiss_index")
 
-def ensure_sample_csv(path: Path):
+def ensure_sample_csv(path: Path) -> bool:
     if path.exists():
         return False
     sample = [
         {"Question": "How do I track my order?", "Answer": "You can track your order via the Orders page."},
         {"Question": "What is the return policy for wrong items?", "Answer": "Contact support within 7 days for return."},
     ]
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["Question", "Answer"])
-        writer.writeheader()
-        writer.writerows(sample)
+        fh.write("Question,Answer\n")
+        for r in sample:
+            # simple CSV escape for commas/newlines
+            q = r["Question"].replace('"', '""')
+            a = r["Answer"].replace('"', '""')
+            fh.write(f'"{q}","{a}"\n')
     return True
 
 created = ensure_sample_csv(CSV_PATH)
@@ -38,42 +48,38 @@ if created:
     st.sidebar.info("Sample CSV created because none was present.")
 
 @st.cache_data(ttl=60 * 60)
-def load_documents_from_csv(path: Path) -> list[Document]:
-    docs = []
+def load_documents_from_csv(path: Path) -> List[Document]:
+    docs: List[Document] = []
     if not path.exists():
         return docs
-    try:
-        with path.open(newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            headers = {h.lower(): h for h in reader.fieldnames or []}
-            q_col = headers.get("question")
-            a_col = headers.get("answer")
-            if not q_col or not a_col:
-                fieldnames = reader.fieldnames or []
-                if len(fieldnames) >= 2:
-                    q_col, a_col = fieldnames[0], fieldnames[1]
-                else:
-                    return []
-            for row in reader:
-                q = (row.get(q_col) or "").strip()
-                a = (row.get(a_col) or "").strip()
-                if q and a:
-                    content = f"Question: {q}\nAnswer: {a}"
-                    docs.append(Document(page_content=content))
-    except Exception:
-        traceback.print_exc(file=sys.stderr)
+    import csv
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        headers = {h.lower(): h for h in (reader.fieldnames or [])}
+        q_col = headers.get("question")
+        a_col = headers.get("answer")
+        if not q_col or not a_col:
+            flds = reader.fieldnames or []
+            if len(flds) >= 2:
+                q_col, a_col = flds[0], flds[1]
+        for row in reader:
+            q = row.get(q_col, "").strip()
+            a = row.get(a_col, "").strip()
+            if q and a:
+                docs.append(Document(page_content=f"Q: {q}\nA: {a}", metadata={"source": str(path)}))
     return docs
 
 @st.cache_resource
 def get_or_build_vectordb():
-    documents = load_documents_from_csv(CSV_PATH)
-    if not documents:
+    docs = load_documents_from_csv(CSV_PATH)
+    if not docs:
         return None
+    # create_vectordb in langchain_helper returns a dict with info (or saves)
     try:
-        vectordb = create_vectordb(documents, persist_path=PERSIST_PATH)
-        return vectordb
-    except Exception:
-        traceback.print_exc(file=sys.stderr)
+        info = create_vectordb(docs, persist_path=PERSIST_PATH)
+        return info
+    except Exception as e:
+        st.sidebar.error(f"Failed to build vector DB: {e}")
         return None
 
 vectordb = get_or_build_vectordb()
@@ -92,23 +98,30 @@ with col2:
 
 if st.button("Get answer") and query.strip():
     if vectordb is None:
-        st.error("Vector DB not available. See logs in terminal.")
+        st.error("Vector DB not available.")
     else:
-        with st.spinner("Retrieving and generating answer (local models)..."):
+        with st.spinner("Retrieving answer..."):
             try:
-                if show_docs:
-                    docs = vectordb.similarity_search(query, k=int(k))
-                    with st.expander("Retrieved documents"):
-                        for i, d in enumerate(docs, 1):
-                            st.markdown(f"**Doc {i}:**")
-                            st.write(d.page_content)
-
-                answer = get_response(query, vectordb=vectordb, k=int(k))
-                st.markdown("**Answer:**")
-                st.write(answer)
+                resp = get_response(query, vectordb_path=PERSIST_PATH, k=int(k))
+                answer = resp.get("answer", "")
+                docs = resp.get("docs", [])
             except Exception as e:
-                st.error(f"Error generating answer: {e}")
-                traceback.print_exc(file=sys.stderr)
+                st.error(f"Error retrieving response: {e}")
+                answer = ""
+                docs = []
+
+        if answer:
+            st.subheader("Answer")
+            st.write(answer)
+
+        if show_docs and docs:
+            st.subheader("Retrieved documents (top-k)")
+            for i, p in enumerate(docs[: int(k)], start=1):
+                st.markdown(f"**Doc {i}:**")
+                st.write(p)
+
+st.markdown("---")
+st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
 
 st.markdown("---")
 st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
