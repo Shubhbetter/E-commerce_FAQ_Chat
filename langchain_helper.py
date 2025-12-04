@@ -1,142 +1,284 @@
 import os
-import re
 import csv
+import json
+import numpy as np
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
+import hashlib
+import requests
+import math
+from collections import Counter, defaultdict
 
-# optionally load .env (harmless)
+# load .env if present (do NOT commit .env to source control)
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# Embeddings: prefer langchain wrapper, fallback to sentence-transformers direct
-EMBEDDING_IMPL = None
+
+class Document:
+    def __init__(self, page_content: str, metadata: Optional[dict] = None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+
+
+# Try to import FAISS-based vectorstore; if unavailable we'll use a simple fallback.
 try:
-    from langchain.embeddings import SentenceTransformerEmbeddings
-    EMBEDDING_IMPL = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    from langchain_community.vectorstores import FAISS  # type: ignore
+    HAVE_FAISS = True
 except Exception:
+    HAVE_FAISS = False
+
+
+class HFInferenceEmbeddings:
+    """Embeddings using Hugging Face router endpoint (no local torch).
+    Uses direct HTTPS POST to https://router.huggingface.co/api/models/{model}.
+    """
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2", token: Optional[str] = None):
+        self.model = model_name
+        self.token = token or os.environ.get("HF_TOKEN")
+        if not self.token:
+            raise ValueError("HF_TOKEN not set. Export it as HF_TOKEN or pass token argument.")
+        self.url = f"https://router.huggingface.co/api/models/{self.model}"
+        self.headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def _is_num_list(self, obj: Any) -> bool:
+        if not isinstance(obj, list) or len(obj) == 0:
+            return False
+        return all(isinstance(x, (int, float)) for x in obj)
+
+    def _find_embedding(self, obj: Any) -> Optional[List[float]]:
+        """Recursively find the first list of numbers in obj and return as floats."""
+        if obj is None:
+            return None
+        if self._is_num_list(obj):
+            return [float(x) for x in obj]
+        if isinstance(obj, dict):
+            if "error" in obj:
+                raise RuntimeError(f"Hugging Face API error: {obj.get('error')}")
+            for key in ("embedding", "embeddings", "data", "result", "outputs", "vector"):
+                if key in obj:
+                    val = obj[key]
+                    if self._is_num_list(val):
+                        return [float(x) for x in val]
+                    if isinstance(val, list) and len(val) > 0:
+                        for itm in val:
+                            emb = self._find_embedding(itm)
+                            if emb is not None:
+                                return emb
+                    emb = self._find_embedding(val)
+                    if emb is not None:
+                        return emb
+            for v in obj.values():
+                emb = self._find_embedding(v)
+                if emb is not None:
+                    return emb
+            return None
+        if isinstance(obj, list):
+            for item in obj:
+                emb = self._find_embedding(item)
+                if emb is not None:
+                    return emb
+        return None
+
+    def _call(self, texts: List[str]) -> List[List[float]]:
+        outputs: List[List[float]] = []
+        for t in texts:
+            payload = {"inputs": t}
+            try:
+                resp = requests.post(self.url, headers=self.headers, json=payload, timeout=60)
+            except Exception as e:
+                raise RuntimeError(f"Hugging Face request failed: {e}")
+            if resp.status_code != 200:
+                # include body for debugging
+                raise RuntimeError(f"Hugging Face API error: {resp.status_code} {resp.text}")
+            try:
+                parsed = resp.json()
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse HF API response JSON: {e} - {resp.text}")
+            emb = self._find_embedding(parsed)
+            if emb is None:
+                raise RuntimeError(f"Unexpected HF API output shape: {type(parsed)}; content: {parsed}")
+            outputs.append(emb)
+        return outputs
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return self._call(texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._call([text])[0]
+
+
+class SimpleHashEmbeddings:
+    """Deterministic lightweight fallback embeddings (no external service)."""
+    def __init__(self, dim: int = 32):
+        self.dim = dim
+
+    def _hash_to_vec(self, text: str):
+        h = hashlib.sha256(text.encode("utf-8")).digest()
+        # produce fixed-length float vector
+        arr = np.frombuffer(h, dtype=np.uint8).astype(np.float32)
+        # reduce/expand to desired dim
+        if arr.size >= self.dim:
+            vec = arr[: self.dim]
+        else:
+            # repeat if needed
+            reps = int(np.ceil(self.dim / arr.size))
+            vec = np.tile(arr, reps)[: self.dim]
+        # normalize
+        vec = vec / (np.linalg.norm(vec) + 1e-12)
+        return vec.tolist()
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [self._hash_to_vec(t) for t in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._hash_to_vec(text)
+
+
+class SimpleTFIDFEmbeddings:
+    """Lightweight on-the-fly TF-IDF embeddings (no external libs)."""
+    def __init__(self, docs: Optional[List[str]] = None):
+        self.vocab = {}
+        self.idf = {}
+        if docs:
+            self.fit(docs)
+
+    def _tokenize(self, text: str):
+        return [t.lower() for t in "".join(c if c.isalnum() else " " for c in text).split() if len(t) > 2]
+
+    def fit(self, docs: List[str]):
+        # build vocab and idf
+        df = defaultdict(int)
+        for d in docs:
+            tokens = set(self._tokenize(d))
+            for t in tokens:
+                df[t] += 1
+        self.vocab = {t: i for i, t in enumerate(sorted(df.keys()))}
+        n = max(1, len(docs))
+        self.idf = {t: math.log((n + 1) / (df[t] + 1)) + 1.0 for t in self.vocab}
+
+    def _tfidf_vector(self, text: str):
+        tf = Counter(self._tokenize(text))
+        vec = [0.0] * len(self.vocab)
+        for t, cnt in tf.items():
+            if t in self.vocab:
+                vec[self.vocab[t]] = cnt * self.idf.get(t, 0.0)
+        # normalize
+        norm = math.sqrt(sum(x * x for x in vec)) + 1e-12
+        return [x / norm for x in vec]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not self.vocab:
+            self.fit(texts)
+        return [self._tfidf_vector(t) for t in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        if not self.vocab:
+            return [0.0] * 1  # won't match — ensure fit() called when building DB
+        return self._tfidf_vector(text)
+
+
+def create_vectordb(documents: List[Document], persist_path: str):
+    """Create and persist a vector DB. Uses HF router if available, otherwise a simple numpy store."""
+    persist_dir = Path(persist_path)
+    persist_dir.mkdir(parents=True, exist_ok=True)
+
+    texts = [doc.page_content for doc in documents]
+
+    # Prefer HF, fall back to TF-IDF embeddings (better than hash)
     try:
-        from sentence_transformers import SentenceTransformer
-        _s_model = SentenceTransformer("all-MiniLM-L6-v2")
-        class _ManualEmbeddings:
-            def embed_documents(self, texts: List[str]):
-                return _s_model.encode(texts, convert_to_numpy=True).tolist()
-            def embed_query(self, text: str):
-                return _s_model.encode([text], convert_to_numpy=True)[0].tolist()
-        EMBEDDING_IMPL = _ManualEmbeddings()
-    except Exception as e:
-        raise RuntimeError(
-            "Missing embedding backend. Install sentence-transformers and/or langchain:\n"
-            "  pip3 install sentence-transformers langchain"
-        ) from e
+        embedder = HFInferenceEmbeddings()
+        _ = embedder.embed_query("test")
+        embeddings = embedder.embed_documents(texts)
+    except Exception:
+        embedder = SimpleTFIDFEmbeddings(docs=texts)
+        embeddings = embedder.embed_documents(texts)
 
-# Vectorstore (FAISS) and Document type
-try:
-    from langchain.vectorstores import FAISS
-    from langchain.schema import Document
-except Exception:
-    raise RuntimeError(
-        "Missing vectorstore backend. Install faiss-cpu and langchain:\n"
-        "  pip3 install faiss-cpu langchain"
-    )
-
-def create_vectordb(documents: List[Document], persist_path: Optional[str] = None):
-    """
-    Create or load a FAISS vectorstore from a list of langchain Documents.
-    If persist_path exists it will be loaded; otherwise saved to that path if provided.
-    """
-    if persist_path:
+    if HAVE_FAISS:
         try:
-            return FAISS.load_local(persist_path, EMBEDDING_IMPL)
+            vectordb = FAISS.from_documents(documents, embedder)  # type: ignore
+            vectordb.save_local(str(persist_dir))
+            return {"type": "faiss", "path": str(persist_dir)}
         except Exception:
             pass
 
-    vectordb = FAISS.from_documents(documents, EMBEDDING_IMPL)
-    if persist_path:
-        try:
-            vectordb.save_local(persist_path)
-        except Exception:
-            pass
-    return vectordb
+    vecs = np.array(embeddings, dtype=np.float32)
+    np.save(persist_dir / "embeddings.npy", vecs)
+    with open(persist_dir / "docs.json", "w", encoding="utf-8") as fh:
+        json.dump(texts, fh, ensure_ascii=False)
+    return {"type": "simple", "path": str(persist_dir)}
 
-def _generate_with_local_llm(prompt: str, max_new_tokens: int = 200, temperature: float = 0.2) -> str:
-    """
-    Generate text using a local Hugging Face transformers model.
-    Default model: distilgpt2 (small, CPU-friendly).
-    """
+
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    a_norm = a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-12)
+    b_norm = b / (np.linalg.norm(b) + 1e-12)
+    return a_norm @ b_norm
+
+
+def get_response(query: str, vectordb_path: str, k: int = 3) -> dict:
+    """Return dict with concise 'answer' (best A:) and list of retrieved 'docs' (top-k)."""
+    persist = Path(vectordb_path)
+    emb_path = persist / "embeddings.npy"
+    docs_path = persist / "docs.json"
+    if not docs_path.exists():
+        return {"answer": "Vector DB not found. Build it first.", "docs": []}
+
+    with open(docs_path, "r", encoding="utf-8") as fh:
+        texts_all = json.load(fh)
+
+    # try HF embedder first, else TF-IDF
     try:
-        from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+        embedder = HFInferenceEmbeddings()
+        q_emb = np.array(embedder.embed_query(query), dtype=np.float32)
+        # if embeddings.npy exists and dims match, use it; else compute on the fly
+        if emb_path.exists():
+            vecs = np.load(emb_path)
+        else:
+            vecs = np.array(embedder.embed_documents(texts_all), dtype=np.float32)
     except Exception:
-        raise RuntimeError("Missing transformers. Install: pip3 install transformers torch")
+        # TF-IDF fallback: build vectorizer from docs and compute all vectors
+        tf = SimpleTFIDFEmbeddings(docs=texts_all)
+        vecs = np.array(tf.embed_documents(texts_all), dtype=np.float32)
+        q_emb = np.array(tf.embed_query(query), dtype=np.float32)
 
-    model_name = os.getenv("LOCAL_LLM_MODEL", "distilgpt2")
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            model.config.pad_token_id = model.config.eos_token_id
-        generator = pipeline("text-generation", model=model, tokenizer=tokenizer, device=-1)
-    except Exception:
-        raise RuntimeError(f"Failed to load local model '{model_name}'. Try 'distilgpt2' or 'gpt2'.")
+    # cosine similarity
+    def cosine_sim_matrix(mat: np.ndarray, q: np.ndarray):
+        if mat.size == 0 or q.size == 0:
+            return np.array([])
+        mat_norm = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-12)
+        q_norm = q / (np.linalg.norm(q) + 1e-12)
+        return mat_norm @ q_norm
 
-    out = generator(
-        prompt,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=temperature,
-        top_p=0.95,
-        top_k=50,
-        num_return_sequences=1,
-        return_full_text=False,
-    )[0]["generated_text"]
+    sims = cosine_sim_matrix(vecs, q_emb)
+    if sims.size == 0:
+        return {"answer": "No relevant documents found.", "docs": []}
 
-    if "Answer:" in prompt or "Answer:" in out:
-        return out.split("Answer:")[-1].strip()
-    return out.strip()
+    idxs = list(np.argsort(-sims)[:k])
+    best_docs = [texts_all[i] for i in idxs]
+    best_raw = best_docs[0] if best_docs else ""
 
-def get_response(query: str, vectordb, k: int = 3, debug: bool = False) -> str:
-    """
-    Retrieve top-k documents from vectordb and generate an answer with a local LLM.
-    """
-    if vectordb is None:
-        raise RuntimeError("vectordb is not provided. Call create_vectordb(...) and pass it in.")
+    # extract A: portion
+    answer = ""
+    if best_raw:
+        if "\nA:" in best_raw:
+            answer = best_raw.split("\nA:", 1)[1].strip()
+        elif " A: " in best_raw and best_raw.startswith("Q:"):
+            answer = best_raw.split(" A: ", 1)[1].strip()
+        else:
+            lines = best_raw.splitlines()
+            answer = "\n".join(lines[1:]).strip() if len(lines) > 1 else best_raw.strip()
 
-    docs = vectordb.similarity_search(query, k=k)
-    context = "\n\n".join(d.page_content for d in docs)
+    return {"answer": answer or "No relevant answer found.", "docs": best_docs}
 
-    if debug:
-        return "DEBUG: Retrieved documents:\n\n" + "\n\n---\n\n".join(d.page_content for d in docs)
-
-    prompt = (
-        "You are a concise, helpful assistant. Use ONLY the provided context to answer the question.\n"
-        "If the answer is not contained in the context, reply: \"I don't know. Please contact customer support.\"\n\n"
-        f"Context:\n{context}\n\n"
-        f"Question: {query}\n\nAnswer:"
-    )
-
-    answer = _generate_with_local_llm(
-        prompt,
-        max_new_tokens=int(os.getenv("LOCAL_LLM_MAX_NEW_TOKENS", "220")),
-        temperature=float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.15")),
-    )
-
-    # cleanup repetitions and length
-    answer = re.sub(r"(\bdefective products;?\b)(\s*\1){2,}", r"\1", answer, flags=re.IGNORECASE)
-    answer = re.sub(r"([?.!,-])\1{3,}", r"\1", answer)
-    answer = answer.strip()
-    if len(answer) > 2000:
-        answer = answer[:2000].rsplit(".", 1)[0] + "."
-
-    if not answer or re.match(r"^(I don't know|No information|Unknown)", answer, flags=re.IGNORECASE):
-        return "I don't know. Please contact customer support."
-
-    return answer
 
 if __name__ == "__main__":
-    # quick CLI: build vectordb from CSV and run a sample query
     ROOT = Path(__file__).parent
     CSV_PATH = ROOT / "Ecommerce_FAQs.csv"
     PERSIST_PATH = str(ROOT / "faiss_index")
@@ -156,11 +298,12 @@ if __name__ == "__main__":
                 q = row.get(q_col, "").strip()
                 a = row.get(a_col, "").strip()
                 if q and a:
-                    docs.append(Document(page_content=f"Question: {q}\nAnswer: {a}"))
+                    docs.append(Document(page_content=f"Q: {q}\nA: {a}"))
 
     if not docs:
         print("No documents loaded. Populate Ecommerce_FAQs.csv with Question and Answer columns.")
     else:
-        vectordb = create_vectordb(docs, persist_path=PERSIST_PATH)
+        info = create_vectordb(docs, persist_path=PERSIST_PATH)
+        print("Vector DB built:", info)
         print("Sample response:")
-        print(get_response("What is the return policy for wrong items?", vectordb=vectordb, k=3))
+        print(get_response("What is the return policy?", vectordb_path=PERSIST_PATH, k=3))
