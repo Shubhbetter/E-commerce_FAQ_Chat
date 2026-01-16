@@ -193,18 +193,30 @@ def create_vectordb(documents: List[Document], persist_path: str):
     texts = [doc.page_content for doc in documents]
 
     # Prefer HF, fall back to TF-IDF embeddings (better than hash)
+    embedder_type = "tfidf"
     try:
         embedder = HFInferenceEmbeddings()
         _ = embedder.embed_query("test")
         embeddings = embedder.embed_documents(texts)
+        embedder_type = "hf"
     except Exception:
         embedder = SimpleTFIDFEmbeddings(docs=texts)
         embeddings = embedder.embed_documents(texts)
 
     if HAVE_FAISS:
         try:
-            vectordb = FAISS.from_documents(documents, embedder)  # type: ignore
+            if embedder_type == "hf":
+                faiss_embedder = HFInferenceEmbeddings()
+            else:
+                faiss_embedder = SimpleTFIDFEmbeddings(docs=texts)
+            vectordb = FAISS.from_documents(documents, faiss_embedder)  # type: ignore
             vectordb.save_local(str(persist_dir))
+            # Save metadata
+            with open(persist_dir / "metadata.json", "w") as f:
+                json.dump({"embedder": embedder_type}, f)
+            # Also save docs for fallback
+            with open(persist_dir / "docs.json", "w", encoding="utf-8") as fh:
+                json.dump(texts, fh, ensure_ascii=False)
             return {"type": "faiss", "path": str(persist_dir)}
         except Exception:
             pass
@@ -225,6 +237,60 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 def get_response(query: str, vectordb_path: str, k: int = 3) -> dict:
     """Return dict with concise 'answer' (best A:) and list of retrieved 'docs' (top-k)."""
     persist = Path(vectordb_path)
+    
+    # Check for FAISS files first
+    faiss_index_path = persist / "index.faiss"
+    metadata_path = persist / "metadata.json"
+    if faiss_index_path.exists() and HAVE_FAISS:
+        try:
+            from langchain_community.vectorstores import FAISS
+            # Determine which embedder to use
+            embedder_type = "tfidf"  # default
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+                    embedder_type = metadata.get("embedder", "tfidf")
+            
+            if embedder_type == "hf":
+                try:
+                    embedder = HFInferenceEmbeddings()
+                    _ = embedder.embed_query("test")  # test if HF works
+                except Exception:
+                    # If HF fails now but was used before, we can't load
+                    raise ValueError("HF embedder required but not available")
+            else:
+                # For TF-IDF, we need the docs to build the embedder
+                docs_path = persist / "docs.json"
+                if docs_path.exists():
+                    with open(docs_path, "r", encoding="utf-8") as fh:
+                        texts_all = json.load(fh)
+                    embedder = SimpleTFIDFEmbeddings(docs=texts_all)
+                else:
+                    raise ValueError("Docs not found for TF-IDF embedder")
+            
+            vectordb = FAISS.load_local(str(persist), embedder, allow_dangerous_deserialization=True)
+            
+            docs = vectordb.similarity_search(query, k=k)
+            best_docs = [doc.page_content for doc in docs]
+            best_raw = best_docs[0] if best_docs else ""
+            
+            # extract answer portion
+            answer = ""
+            if best_raw:
+                if "\nA:" in best_raw:
+                    answer = best_raw.split("\nA:", 1)[1].strip()
+                elif " A: " in best_raw and best_raw.startswith("Q:"):
+                    answer = best_raw.split(" A: ", 1)[1].strip()
+                else:
+                    lines = best_raw.splitlines()
+                    answer = "\n".join(lines[1:]).strip() if len(lines) > 1 else best_raw.strip()
+            
+            return {"answer": answer or "No relevant answer found.", "docs": best_docs}
+        except Exception as e:
+            # If FAISS loading fails, fall back to simple method
+            pass
+    
+    # Fallback to simple numpy method
     emb_path = persist / "embeddings.npy"
     docs_path = persist / "docs.json"
     if not docs_path.exists():
