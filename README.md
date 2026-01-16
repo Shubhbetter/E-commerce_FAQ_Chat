@@ -1,3 +1,21 @@
+# E-commerce FAQ Chat
+
+## Local Development
+
+1. Clone the repository
+2. Create virtual environment: `python3 -m venv venv`
+3. Activate: `source venv/bin/activate`
+4. Install dependencies: `pip install -r requirements.txt`
+5. Run: `streamlit run main.py`
+
+## Streamlit Cloud Deployment
+
+1. Go to [share.streamlit.io](https://share.streamlit.io)
+2. Connect your GitHub account
+3. Select this repository
+4. Set main file path to: `main.py`
+5. Deploy!
+
 # E-commerce FAQ Chatbot  
   
 ![MADE WITH PYTHON](https://img.shields.io/badge/MADE_WITH-PYTHON-blue)  
