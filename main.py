@@ -38,90 +38,106 @@ def ensure_sample_csv(path: Path) -> bool:
 
 created = ensure_sample_csv(CSV_PATH)
 
-st.set_page_config(page_title="E-commerce FAQ ", layout="centered")
-st.title("E-commerce FAQ Chat")
+st.set_page_config(
+    page_title="E-commerce FAQ Assistant",
+    page_icon="🛒",
+    layout="centered"
+)
 
-st.sidebar.header("Diagnostics")
-st.sidebar.write(f"CSV: {CSV_PATH}")
-st.sidebar.write(f"FAISS persist path: {PERSIST_PATH}")
+# ---------- Custom CSS ----------
+st.markdown("""
+<style>
+.main {
+    background-color: #f9fafb;
+}
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    max-width: 800px;
+}
+.card {
+    background: white;
+    padding: 1.25rem;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    margin-bottom: 1rem;
+}
+.answer {
+    font-size: 1.05rem;
+    line-height: 1.6;
+}
+.footer {
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.9rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------- Header ----------
+st.title("🛒 E-commerce FAQ Assistant")
+st.caption("Ask anything about orders, returns, payments & support")
+
+# ---------- Sidebar ----------
+st.sidebar.header("⚙️ System Info")
+st.sidebar.write(f"📄 **CSV:** `{CSV_PATH.name}`")
+st.sidebar.write(f"🧠 **Vector DB:** FAISS")
+st.sidebar.write(f"📁 **Index Path:** `{PERSIST_PATH}`")
+
 if created:
-    st.sidebar.info("Sample CSV created because none was present.")
+    st.sidebar.info("Sample FAQ dataset was auto-created.")
 
-@st.cache_data(ttl=60 * 60)
-def load_documents_from_csv(path: Path) -> List[Document]:
-    docs: List[Document] = []
-    if not path.exists():
-        return docs
-    import csv
-    with path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        headers = {h.lower(): h for h in (reader.fieldnames or [])}
-        q_col = headers.get("question")
-        a_col = headers.get("answer")
-        if not q_col or not a_col:
-            flds = reader.fieldnames or []
-            if len(flds) >= 2:
-                q_col, a_col = flds[0], flds[1]
-        for row in reader:
-            q = row.get(q_col, "").strip()
-            a = row.get(a_col, "").strip()
-            if q and a:
-                docs.append(Document(page_content=f"Q: {q}\nA: {a}", metadata={"source": str(path)}))
-    return docs
-
-@st.cache_resource
-def get_or_build_vectordb():
-    docs = load_documents_from_csv(CSV_PATH)
-    if not docs:
-        return None
-    # create_vectordb in langchain_helper returns a dict with info (or saves)
-    try:
-        info = create_vectordb(docs, persist_path=PERSIST_PATH)
-        return info
-    except Exception as e:
-        st.sidebar.error(f"Failed to build vector DB: {e}")
-        return None
-
-vectordb = get_or_build_vectordb()
-
+# ---------- Status ----------
 if vectordb is None:
-    st.error("No documents loaded or vector DB failed to build. Check terminal logs.")
+    st.error("❌ Vector database not ready. Check logs.")
 else:
-    st.success("Dataset loaded. Vector DB ready.")
+    st.success("✅ Knowledge base loaded successfully")
 
-query = st.text_input("Ask a question about the e-commerce site", "")
-col1, col2 = st.columns([1, 4])
+# ---------- Query Input ----------
+st.markdown("### ❓ Ask your question")
+query = st.text_input(
+    "",
+    placeholder="e.g. How can I track my order?"
+)
+
+col1, col2 = st.columns([1, 3])
 with col1:
-    k = st.number_input("Top-k documents", min_value=1, max_value=10, value=3)
+    k = st.number_input("Top-K", 1, 10, 3)
 with col2:
-    show_docs = st.checkbox("Show retrieved documents", value=False)
+    show_docs = st.checkbox("Show retrieved documents")
 
-if st.button("Get answer") and query.strip():
-    if vectordb is None:
-        st.error("Vector DB not available.")
-    else:
-        with st.spinner("Retrieving answer..."):
-            try:
-                resp = get_response(query, vectordb_path=PERSIST_PATH, k=int(k))
-                answer = resp.get("answer", "")
-                docs = resp.get("docs", [])
-            except Exception as e:
-                st.error(f"Error retrieving response: {e}")
-                answer = ""
-                docs = []
+# ---------- Action ----------
+if st.button("🔍 Get Answer", use_container_width=True) and query.strip():
+    with st.spinner("Thinking..."):
+        try:
+            resp = get_response(query, vectordb_path=PERSIST_PATH, k=int(k))
+            answer = resp.get("answer", "")
+            docs = resp.get("docs", [])
+        except Exception as e:
+            st.error(f"Error: {e}")
+            answer, docs = "", []
 
-        if answer:
-            st.subheader("Answer")
-            st.write(answer)
+    if answer:
+        st.markdown("### ✅ Answer")
+        st.markdown(f"""
+        <div class="card answer">
+            {answer}
+        </div>
+        """, unsafe_allow_html=True)
 
-        if show_docs and docs:
-            st.subheader("Retrieved documents (top-k)")
-            for i, p in enumerate(docs[: int(k)], start=1):
-                st.markdown(f"**Doc {i}:**")
-                st.write(p)
+    if show_docs and docs:
+        st.markdown("### 📄 Retrieved Documents")
+        for i, d in enumerate(docs[:k], 1):
+            st.markdown(f"""
+            <div class="card">
+                <strong>Doc {i}</strong><br>
+                {d}
+            </div>
+            """, unsafe_allow_html=True)
 
+# ---------- Footer ----------
 st.markdown("---")
-st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
-
-st.markdown("---")
-st.caption("**Created by Shubham Pandey**")
+st.markdown(
+    "<div class='footer'><strong>Created by Shubham Pandey</strong></div>",
+    unsafe_allow_html=True
+)
