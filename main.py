@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import streamlit as st
 
-# try to import langchain Document, fallback to simple local Document if not installed
+# Try to import langchain Document, fallback if not installed
 try:
     from langchain_core.documents import Document
 except Exception:
@@ -15,129 +15,126 @@ except Exception:
 
 from langchain_helper import create_vectordb, get_response
 
+# ---------------- Paths ----------------
 ROOT = Path(__file__).parent
 CSV_PATH = ROOT / "Ecommerce_FAQs.csv"
 PERSIST_PATH = str(ROOT / "faiss_index")
 
+# ---------------- CSV Setup ----------------
 def ensure_sample_csv(path: Path) -> bool:
     if path.exists():
         return False
+
     sample = [
         {"Question": "How do I track my order?", "Answer": "You can track your order via the Orders page."},
         {"Question": "What is the return policy for wrong items?", "Answer": "Contact support within 7 days for return."},
     ]
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
         fh.write("Question,Answer\n")
         for r in sample:
-            # simple CSV escape for commas/newlines
             q = r["Question"].replace('"', '""')
             a = r["Answer"].replace('"', '""')
             fh.write(f'"{q}","{a}"\n')
+
     return True
 
 created = ensure_sample_csv(CSV_PATH)
 
-st.set_page_config(
-    page_title="E-commerce FAQ Assistant",
-    page_icon="🛒",
-    layout="centered"
-)
+# ---------------- UI ----------------
+st.set_page_config(page_title="E-commerce FAQ (local)", layout="centered")
+st.title("E-commerce FAQ Chat (local-only)")
 
-# ---------- Custom CSS ----------
-st.markdown("""
-<style>
-.main {
-    background-color: #f9fafb;
-}
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-    max-width: 800px;
-}
-.card {
-    background: white;
-    padding: 1.25rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
-    margin-bottom: 1rem;
-}
-.answer {
-    font-size: 1.05rem;
-    line-height: 1.6;
-}
-.footer {
-    text-align: center;
-    color: #6b7280;
-    font-size: 0.9rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ---------- Header ----------
-st.title("🛒 E-commerce FAQ Assistant")
-st.caption("Ask anything about orders, returns, payments & support")
-
-# ---------- Sidebar ----------
-st.sidebar.header("⚙️ System Info")
-st.sidebar.write(f"📄 **CSV:** `{CSV_PATH.name}`")
-st.sidebar.write(f"🧠 **Vector DB:** FAISS")
-st.sidebar.write(f"📁 **Index Path:** `{PERSIST_PATH}`")
-
+st.sidebar.header("Diagnostics")
+st.sidebar.write(f"CSV: {CSV_PATH}")
+st.sidebar.write(f"FAISS persist path: {PERSIST_PATH}")
 if created:
-    st.sidebar.info("Sample FAQ dataset was auto-created.")
+    st.sidebar.info("Sample CSV created because none was present.")
 
-# ---------- Status ----------
+# ---------------- Load Docs ----------------
+@st.cache_data(ttl=3600)
+def load_documents_from_csv(path: Path) -> List[Document]:
+    docs: List[Document] = []
+    if not path.exists():
+        return docs
+
+    import csv
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        headers = {h.lower(): h for h in (reader.fieldnames or [])}
+        q_col = headers.get("question")
+        a_col = headers.get("answer")
+
+        if not q_col or not a_col:
+            flds = reader.fieldnames or []
+            if len(flds) >= 2:
+                q_col, a_col = flds[0], flds[1]
+
+        for row in reader:
+            q = row.get(q_col, "").strip()
+            a = row.get(a_col, "").strip()
+            if q and a:
+                docs.append(
+                    Document(
+                        page_content=f"Q: {q}\nA: {a}",
+                        metadata={"source": str(path)}
+                    )
+                )
+    return docs
+
+# ---------------- Vector DB ----------------
+@st.cache_resource
+def get_or_build_vectordb():
+    docs = load_documents_from_csv(CSV_PATH)
+    if not docs:
+        return None
+
+    try:
+        return create_vectordb(docs, persist_path=PERSIST_PATH)
+    except Exception as e:
+        st.sidebar.error(f"Failed to build vector DB: {e}")
+        return None
+
+vectordb = get_or_build_vectordb()
+
 if vectordb is None:
-    st.error("❌ Vector database not ready. Check logs.")
+    st.error("No documents loaded or vector DB failed to build.")
 else:
-    st.success("✅ Knowledge base loaded successfully")
+    st.success("Dataset loaded. Vector DB ready.")
 
-# ---------- Query Input ----------
-st.markdown("### ❓ Ask your question")
-query = st.text_input(
-    "",
-    placeholder="e.g. How can I track my order?"
-)
+# ---------------- Chat ----------------
+query = st.text_input("Ask a question about the e-commerce site")
 
-col1, col2 = st.columns([1, 3])
+col1, col2 = st.columns([1, 4])
 with col1:
-    k = st.number_input("Top-K", 1, 10, 3)
+    k = st.number_input("Top-k documents", 1, 10, 3)
 with col2:
     show_docs = st.checkbox("Show retrieved documents")
 
-# ---------- Action ----------
-if st.button("🔍 Get Answer", use_container_width=True) and query.strip():
-    with st.spinner("Thinking..."):
-        try:
-            resp = get_response(query, vectordb_path=PERSIST_PATH, k=int(k))
-            answer = resp.get("answer", "")
-            docs = resp.get("docs", [])
-        except Exception as e:
-            st.error(f"Error: {e}")
-            answer, docs = "", []
+if st.button("Get answer") and query.strip():
+    if vectordb is None:
+        st.error("Vector DB not available.")
+    else:
+        with st.spinner("Retrieving answer..."):
+            try:
+                resp = get_response(query, vectordb_path=PERSIST_PATH, k=int(k))
+                answer = resp.get("answer", "")
+                docs = resp.get("docs", [])
+            except Exception as e:
+                st.error(f"Error retrieving response: {e}")
+                answer, docs = "", []
 
-    if answer:
-        st.markdown("### ✅ Answer")
-        st.markdown(f"""
-        <div class="card answer">
-            {answer}
-        </div>
-        """, unsafe_allow_html=True)
+        if answer:
+            st.subheader("Answer")
+            st.write(answer)
 
-    if show_docs and docs:
-        st.markdown("### 📄 Retrieved Documents")
-        for i, d in enumerate(docs[:k], 1):
-            st.markdown(f"""
-            <div class="card">
-                <strong>Doc {i}</strong><br>
-                {d}
-            </div>
-            """, unsafe_allow_html=True)
+        if show_docs and docs:
+            st.subheader("Retrieved documents (top-k)")
+            for i, p in enumerate(docs[:k], start=1):
+                st.markdown(f"**Doc {i}:**")
+                st.write(p)
 
-# ---------- Footer ----------
+# ---------------- Footer ----------------
 st.markdown("---")
-st.markdown(
-    "<div class='footer'><strong>Created by Shubham Pandey</strong></div>",
-    unsafe_allow_html=True
-)
+st.markdown("**Created by Shubham Pandey**")
