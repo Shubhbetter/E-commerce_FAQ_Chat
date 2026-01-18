@@ -38,8 +38,8 @@ def ensure_sample_csv(path: Path) -> bool:
 
 created = ensure_sample_csv(CSV_PATH)
 
-st.set_page_config(page_title="E-commerce FAQ (local)", layout="centered")
-st.title("E-commerce FAQ Chat (local-only)")
+st.set_page_config(page_title="E-commerce FAQ ", layout="centered")
+st.title("E-commerce FAQ Chat")
 
 st.sidebar.header("Diagnostics")
 st.sidebar.write(f"CSV: {CSV_PATH}")
@@ -124,4 +124,4 @@ st.markdown("---")
 st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
 
 st.markdown("---")
-st.caption("Created by Shubham Pandey")
+st.caption("**Created by Shubham Pandey**")
