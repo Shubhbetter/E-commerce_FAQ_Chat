@@ -124,4 +124,4 @@ st.markdown("---")
 st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
 
 st.markdown("---")
-st.caption("If the UI is blank, check the terminal where you ran `streamlit run main.py` for errors.")
+st.caption("Created by Shubham Pandey")
