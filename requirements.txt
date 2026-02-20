@@ -3,3 +3,13 @@ langchain==0.1.10
 langchain-google-genai==0.0.9
 streamlit==1.31.1
 faiss-cpu
+
+# Fine-tuning pipeline (LoRA/QLoRA)
+pandas>=2.0.0
+datasets>=2.19.0
+transformers>=4.41.0
+peft>=0.11.0
+trl>=0.9.4
+accelerate>=0.30.0
+bitsandbytes>=0.43.1
+rouge-score>=0.1.2
