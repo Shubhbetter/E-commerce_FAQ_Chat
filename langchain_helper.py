@@ -1,3 +1,18 @@
+"""Helper utilities for document processing and retrieval.
+
+This module contains:
+
+* lightweight ``Document`` container used across the repo
+* several embedding implementations (Hugging Face inference endpoint,
+  TF-IDF, hash-based fallback)
+* logic to create/persist a vector database (FAISS or numpy fallback)
+* a simple ``get_response`` function that performs a k-NN search and extracts
+  the answer string from the stored page content.
+
+The code is written to be easy to read and debug; comments are placed liberally
+because this file is an educational resource as much as a library.
+"""
+
 import os
 import csv
 import json

@@ -1,3 +1,17 @@
+"""Evaluate a fine-tuned adapter for relevance and factuality.
+
+The script loads a base causal LM and attaches a LoRA/QLoRA adapter (using
+``peft``).  It then runs through a test split, generating answers to the
+instruction formatted questions.  We report:
+
+* average ROUGE-L F1 against the ground truth answer (a proxy for relevance)
+* a simple "hallucination proxy" metric that measures the fraction of tokens
+  in the prediction that do **not** appear in the reference.  Lower is better.
+
+This evaluation is intentionally lightweight and uses deterministic decoding
+(`do_sample=False`) to avoid introducing randomness into the assessment.
+"""
+
 import argparse
 import json
 from pathlib import Path
@@ -44,13 +58,17 @@ def main() -> None:
     rouge_ls, hallucinations = [], []
 
     for row in ds:
+        # construct the same prompt template used in preprocessing
         prompt = build_prompt(row["input"])
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+        # deterministic generation ensures repeatable evaluation
         outputs = model.generate(**inputs, max_new_tokens=args.max_new_tokens, do_sample=False)
         text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         pred = text.split("### Response:\n")[-1].strip()
 
         ref = row["output"].strip()
+        # track rouge-L and hallucination proxy for later averaging
         rouge_ls.append(scorer.score(ref, pred)["rougeL"].fmeasure)
         hallucinations.append(hallucination_proxy(pred, ref))
 

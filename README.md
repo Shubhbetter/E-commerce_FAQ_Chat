@@ -26,12 +26,19 @@ An automated FAQ chatbot for an e-commerce platform.
 
 ## Technology Stack
 
-This project leverages several powerful technologies to deliver an intelligent and informative FAQ experience:
+To make the FAQ chatbot functional and easy to extend, the project combines a
+few well‑known open-source tools and services.  The icon images shown below are
+merely decorative badges that reflect the libraries/frameworks used:
 
-* **LangChain**
-* **Gemini Pro**
-* **ChromaDB**
-* **Streamlit**
+* **LangChain** – orchestrates document loading, retrieval and prompt
+  formatting; used for the underlying vector search code in `langchain_helper`.
+* **Gemini Pro** – placeholder for any large language model endpoint (the
+  original demo used Google Gemini before being refactored to the local
+  fine‑tuning pipeline).
+* **ChromaDB** – the FAISS‑based vector store used when ``langchain_community``
+  is available; it holds FAQ embeddings for similarity search.
+* **Streamlit** – powers the simple web UI that allows users to ask questions
+  and view answers.
 
 <img align="left" src="https://github.com/imsoumya18/imsoumya18/blob/main/assets/langchain.png"  alt="LangChain"  height="42px">
 <img align="left" src="https://github.com/imsoumya18/imsoumya18/blob/main/assets/gemini.png"  alt="Gemini"  height="42px">
@@ -39,44 +46,121 @@ This project leverages several powerful technologies to deliver an intelligent a
 <img src="https://github.com/imsoumya18/imsoumya18/blob/main/assets/streamlit.png"  alt="Streamlit"  height="42px">
 
 ## Dataset
-* **[Kaggle: Ecommerce-FAQ-Chatbot-Dataset [JSON]](https://www.kaggle.com/datasets/saadmakhdoom/ecommerce-faq-chatbot-dataset)**
-* **[Kaggle: Ecommerce-FAQ-Chatbot-Dataset [CSV]](https://github.com/imsoumya18/E-commerce_FAQ/blob/main/Ecommerce_FAQs.csv)**
 
-The model is just for **demonstration purpose only**. It is trained using **only 80 Question - Answer pairs**. So, expecting it to answer any question other then used for training with high accuracy is not a good idea. You can [have a look at all the 80 questions](https://github.com/imsoumya18/E-commerce_FAQ/blob/main/Ecommerce_FAQs.csv) and ask something similar or combined of multiple questions.
+The pipeline is designed to work with *any* e-commerce FAQ-style CSV, and it
+currently supports two publicly available sources:
 
+* **Kaggle** – the original Ecommerce-FAQ-Chatbot-Dataset (saadmakhdoom) in
+  `Question`/`Answer` format.  `Ecommerce_FAQs.csv` in this repo is a
+  snapshot of that data.
+* **Hugging Face** – the larger
+  `bitext/Bitext-retail-ecommerce-llm-chatbot-training-dataset` contains
+  columns `instruction` and `response` as well as intent/category metadata.
+  A copy of that CSV is also included (`bitext-retail-ecommerce-llm-chatbot-training-dataset.csv`).
+
+The preprocessing script (`llm_pipeline_preprocess.py`) automatically detects
+which style is being used and converts the relevant columns into the
+instruction/response JSONL format used for training.  You can pass any other
+CSV with the same structure and it will work as well.
+
+Each row in the CSV contains a customer question and its corresponding answer.
+The preprocessing pipeline converts them into an instruction/response format
+suitable for supervised fine‑tuning.  The training split typically contains
+fewer than one hundred examples, so the resulting model is purely
+demonstrative: it will only answer questions that are very similar to those in
+the dataset.  Expect limited generalization outside the provided pairs.
+
+The core of the project is therefore:
+
+1. **Data preparation** – cleaning, deduplication and formatting of the FAQ
+   pairs from a real-world public dataset.
+2. **LLM fine-tuning** – applying LoRA/QLoRA adapters to a Hugging Face causal
+   model based on this data, with an emphasis on factuality and reduced
+   hallucinations.
+3. **Evaluation & deployment** – scripts for measuring relevance/factuality and
+   a simple Streamlit front-end demonstrating retrieval from the fine-tuned
+   FAQ knowledge base.
+
+The dataset originates from public sources (Kaggle and Hugging Face), and the
+fine-tuning procedure is designed to produce a production-ready adapter that
+can be extended in future modules or a research paper.
 ## New: Production-style LLM Fine-Tuning Module (addresses review feedback)
 
-This repository now includes a complete fine-tuning pipeline so you can build one LLM model on the project dataset and extend it in your next module/research paper.
+This repository now includes a full fine-tuning pipeline so you can build a
+custom LLM model using a public dataset and then continue working on the same
+base in future modules or a research paper.
+
+### Dataset acquisition
+
+We use the **Kaggle Ecommerce FAQ Chatbot Dataset** as our training data.  The
+CSV is stored here as `Ecommerce_FAQs.csv`, but you can download the latest
+version directly via Kaggle if you prefer:
+
+```bash
+# requires `pip install kaggle` and a configured ~/.kaggle/kaggle.json
+python download_dataset.py --dataset saadmakhdoom/ecommerce-faq-chatbot-dataset \
+    --file "Ecommerce_FAQs.csv"
+```
+
+Alternatively, to work with the Hugging Face *Bitext* dataset you can pull the
+CSV directly with the `datasets` library:
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset("bitext/Bitext-retail-ecommerce-llm-chatbot-training-dataset", split="train")
+ds.to_csv("bitext-retail-ecommerce-llm-chatbot-training-dataset.csv", index=False)
+```
+
+Once you have the CSV file, run the preprocessing script as described below.
+
+The file simply contains "Question"/"Answer" pairs; `llm_pipeline_preprocess.py`
+will take care of cleaning, deduplicating, and converting to an
+instruction-style JSONL.
 
 ### Model choice
-- **Base model (Hugging Face):** `TinyLlama/TinyLlama-1.1B-Chat-v1.0`
-- **Fine-tuning method:** **QLoRA** (4-bit quantization + LoRA adapters)
 
-### Dataset choice
-- **Public dataset source:** Kaggle e-commerce FAQ dataset (the same source represented here as `Ecommerce_FAQs.csv`)
-- Pipeline converts it to instruction format and creates train/validation/test splits.
+- **Base model (Hugging Face):** `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (configurable)
+- **Fine-tuning method:** LoRA adapters, optionally with 4‑bit quantization
+  (QLoRA).
 
-### Files added for the pipeline
-- `llm_pipeline_preprocess.py` → data cleaning, deduplication, instruction formatting, split generation
-- `llm_pipeline_train_qlora.py` → QLoRA fine-tuning script
-- `llm_pipeline_evaluate.py` → relevance/factuality-oriented evaluation (ROUGE-L + hallucination proxy)
+### Pipeline overview
+
+* `llm_pipeline_preprocess.py` – data cleaning + split generation (train/val/test)
+* `download_dataset.py` – helper to fetch the CSV from Kaggle
+* `llm_pipeline_train.py` – training script supporting both LoRA and QLoRA
+* `llm_pipeline_evaluate.py` – computes ROUGE-L and a simple hallucination
+  proxy metric to gauge factuality
+* `run_inference.py` – example of loading the saved adapter for answering new questions
 
 ### End-to-end commands
 
-1. **Preprocess data**
+1. **Download the raw CSV (optional)**
    ```bash
-   python llm_pipeline_preprocess.py --input_csv Ecommerce_FAQs.csv --output_dir training_data
+   python download_dataset.py --dataset saadmakhdoom/ecommerce-faq-chatbot-dataset \
+       --file "Ecommerce_FAQs.csv"
    ```
 
-2. **Train QLoRA adapters**
+2. **Preprocess data**
+  ```bash
+  # from a local CSV (Kaggle or HF copy)
+  python llm_pipeline_preprocess.py --input_csv Ecommerce_FAQs.csv --output_dir training_data
+
+  # or load directly from the HF Bitext dataset by name:
+  python llm_pipeline_preprocess.py --hf_dataset bitext/Bitext-retail-ecommerce-llm-chatbot-training-dataset \
+     --hf_split train --output_dir training_data
+  ```
+
+3. **Train adapters**
    ```bash
-   python llm_pipeline_train_qlora.py \
+   python llm_pipeline_train.py \
      --model_name TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
      --data_dir training_data \
-     --output_dir artifacts/tinyllama-ecom-qlora
+     --output_dir artifacts/tinyllama-ecom-qlora \
+     --lora_type qlora   # or "lora" for non‑quantized
    ```
 
-3. **Evaluate for relevance/factuality + hallucination reduction proxy**
+4. **Evaluate for relevance/factuality + hallucination proxy**
    ```bash
    python llm_pipeline_evaluate.py \
      --base_model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
@@ -85,13 +169,18 @@ This repository now includes a complete fine-tuning pipeline so you can build on
    ```
 
 ### Hallucination reduction strategy used
-- Instruction template explicitly enforces concise factual answers.
+
+- Instruction template enforces concise factual answers.
 - FAQ-specific supervised fine-tuning biases output toward known domain facts.
-- Deterministic decoding during evaluation (`do_sample=False`) reduces unsupported generations.
-- A hallucination proxy metric is reported to track unsupported-token drift against references.
+- Deterministic decoding during evaluation (`do_sample=False`) reduces
+  unsupported generations.
+- The evaluation script computes a simple "hallucination proxy" metric based
+  on token overlap with the reference answer.
 
 Any type of feedback is appreciated: ssshubham.147.sp@gmail.com
 
+**Author:** Shubham Pandey – project conception, dataset usage, and pipeline
+implementation.
 ![forthebadge made-by-shubham](https://img.shields.io/badge/CREATED_BY-SHUBHAM-blue)
 
 ![forthebadge hosted-on-streamlit](https://img.shields.io/badge/HOSTED_ON-STREAMLIT-red)

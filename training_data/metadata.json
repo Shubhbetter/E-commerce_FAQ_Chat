@@ -1,8 +1,0 @@
-{
-  "source": "Ecommerce_FAQs.csv",
-  "total_rows": 79,
-  "train": 63,
-  "val": 7,
-  "test": 9,
-  "notes": "Dataset sourced from public Kaggle Ecommerce FAQ dataset represented by Ecommerce_FAQs.csv."
-}

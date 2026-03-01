@@ -1,3 +1,13 @@
+"""Utility to build a FAISS/vector store from the CSV dataset.
+
+The script is independent from the Streamlit front end; running it will load
+Ecommerce_FAQs.csv, create or update the index under ``faiss_index`` and
+perform a quick sanity check by issuing one similarity query.
+
+This can be used to test that our embedding/vector code works without
+starting the web interface.
+"""
+
 import csv
 from pathlib import Path
 import sys
@@ -13,6 +23,7 @@ PERSIST_PATH = str(ROOT / "faiss_index")
 def load_documents_from_csv(path: Path) -> list[Document]:
     docs = []
     if not path.exists():
+        # early exit if file missing; caller can handle
         print(f"CSV dataset not found at {path}. Create a CSV with 'Question' and 'Answer' columns.", file=sys.stderr)
         return docs
 

@@ -1,3 +1,13 @@
+"""Streamlit application for the e-commerce FAQ chatbot.
+
+This front end simply loads the CSV, builds a vector database using
+``langchain_helper.create_vectordb`` and answers user queries by performing a
+similarity search to retrieve the most relevant FAQ entry.  The heavy
+fine‑tuning work is performed by the separate pipeline scripts; this app
+remains a lightweight demo of how the data can power a retrieval‑augmented
+chatbot.
+"""
+
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -21,6 +31,7 @@ CSV_PATH = ROOT / "Ecommerce_FAQs.csv"
 PERSIST_PATH = str(ROOT / "faiss_index")
 
 # ---------------- CSV Setup ----------------
+# If the CSV doesn't exist we'll write a tiny example so the UI still works.
 def ensure_sample_csv(path: Path) -> bool:
     if path.exists():
         return False
@@ -53,6 +64,7 @@ if created:
     st.sidebar.info("Sample CSV created because none was present.")
 
 # ---------------- Load Docs ----------------
+# caching ensures the CSV is only read once per hour
 @st.cache_data(ttl=3600)
 def load_documents_from_csv(path: Path) -> List[Document]:
     docs: List[Document] = []
@@ -101,10 +113,8 @@ vectordb = get_or_build_vectordb()
 if vectordb is None:
     st.error("No documents loaded or vector DB failed to build.")
 else:
-    st.success("Dataset loaded. Vector DB ready.")
-
-# ---------------- Chat ----------------
-query = st.text_input("Ask a question about the e-commerce site")
+    # vector database has been built or loaded from disk
+    query = st.text_input("Ask a question about the e-commerce site")
 
 col1, col2 = st.columns([1, 4])
 with col1:

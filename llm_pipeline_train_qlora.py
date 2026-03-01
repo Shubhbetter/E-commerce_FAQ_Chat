@@ -1,11 +1,19 @@
-import argparse
-from pathlib import Path
+"""Deprecated training entrypoint; use ``llm_pipeline_train.py`` instead.
 
-import torch
-from datasets import load_dataset
-from peft import LoraConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from trl import SFTConfig, SFTTrainer
+This module previously implemented QLoRA-specific logic but has been
+superseded by ``llm_pipeline_train.py`` which supports both LoRA and QLoRA and
+is more fully documented.  The file remains here for backward compatibility
+and will print a helpful message when executed.
+"""
+
+import argparse
+import sys
+
+print("WARNING: llm_pipeline_train_qlora.py is deprecated."
+      " Please switch to llm_pipeline_train.py which supports both lora and qlora.")
+
+# The original implementation is available in git history if you really need it.
+sys.exit(0)
 
 
 def main() -> None:
