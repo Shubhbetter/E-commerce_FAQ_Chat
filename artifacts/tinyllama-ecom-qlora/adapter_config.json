@@ -1,1 +1,33 @@
-{"base_model_name_or_path": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "peft_type": "LORA", "task_type": "CAUSAL_LM"}
+{
+  "base_model_name_or_path": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "peft_type": "LORA",
+  "task_type": "CAUSAL_LM",
+  "fan_in_fan_out": false,
+  "lora_alpha": 16,
+  "lora_dropout": 0.1,
+  "r": 64,
+  "target_modules": [
+    "q_proj",
+    "k_proj", 
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj"
+  ],
+  "modules_to_save": null,
+  "init_lora_weights": true,
+  "layers_to_transform": null,
+  "layers_pattern": null,
+  "rank_pattern": {},
+  "alpha_pattern": {},
+  "megatron_config": null,
+  "megatron_core": "megatron.core",
+  "lora_bias": false,
+  "use_rslora": false,
+  "use_dora": false,
+  "lora_dtype": "float32",
+  "merge_weights": false,
+  "revision": null,
+  "trust_remote_code": false
+}

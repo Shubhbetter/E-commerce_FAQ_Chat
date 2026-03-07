@@ -2,7 +2,7 @@
   "source": "Ecommerce_FAQs.csv",
   "total_rows": 2,
   "train": 1,
-  "val": 0,
+  "val": 1,
   "test": 1,
-  "notes": "Dataset sourced from public Kaggle Ecommerce FAQ dataset (saadmakhdoom/ecommerce-faq-chatbot-dataset)."
+  "notes": "Dataset sourced from public Kaggle Ecommerce FAQ dataset (saadmakhdoom/ecommerce-faq-chatbot-dataset). Processed for instruction tuning format."
 }
