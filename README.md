@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![Hugging Face](https://img.shields.io/badge/🤗-Hugging%20Face-yellow.svg)](https://huggingface.co/)
-[![Streamlit](https://e-commercefaqchat-hrtjahqkhe88iwxgkh5jed.streamlit.app/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Web%20App-red.svg)](https://e-commercefaqchat-hrtjahqkhe88iwxgkh5jed.streamlit.app/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **A Production-Ready LLM Fine-Tuning Pipeline for Intelligent E-commerce FAQ Assistance**
