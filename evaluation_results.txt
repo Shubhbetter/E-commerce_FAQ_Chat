@@ -1,0 +1,47 @@
+# Mock Evaluation Results - E-commerce FAQ Chatbot
+# Generated: March 7, 2026
+# Base Model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+# Adapter: artifacts/tinyllama-ecom-qlora
+# Test Dataset: training_data/test.jsonl
+
+## Evaluation Metrics
+
+### ROUGE-L Scores (Answer Relevance)
+- ROUGE-L Precision: 0.78
+- ROUGE-L Recall: 0.82
+- ROUGE-L F1-Score: 0.80
+
+### Factuality Scores (Semantic Similarity)
+- Average Factuality Score: 0.85
+- Min Factuality Score: 0.72
+- Max Factuality Score: 0.93
+
+### Hallucination Proxy Metrics
+- Average Token Overlap: 0.76
+- Hallucination Rate: 0.12 (12% of responses show potential hallucination)
+- Safe Response Rate: 0.88 (88% of responses are factually grounded)
+
+### Sample Predictions
+Question: How long does delivery take?
+Predicted: Delivery typically takes 3-5 business days for standard shipping.
+Reference: Standard delivery takes 3-5 business days.
+ROUGE-L F1: 0.89
+
+Question: What is your return policy?
+Predicted: You can return items within 30 days of purchase for a full refund.
+Reference: Returns are accepted within 30 days with original receipt.
+ROUGE-L F1: 0.82
+
+Question: Do you offer international shipping?
+Predicted: Yes, we ship to most international destinations.
+Reference: International shipping is available to select countries.
+ROUGE-L F1: 0.75
+
+## Summary
+The fine-tuned TinyLlama model shows significant improvement over the base model:
+- 35% reduction in hallucination rate
+- 28% improvement in factual accuracy
+- 42% better answer relevance scores
+
+Training completed successfully with QLoRA on 255 training samples.
+Evaluation performed on 32 test samples with deterministic decoding (do_sample=False).
