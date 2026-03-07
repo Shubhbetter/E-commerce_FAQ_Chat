@@ -224,7 +224,7 @@ st.markdown("""
 def ensure_sample_csv(path: Path) -> bool:
     if path.exists():
         return False
-    
+
     sample = [
         {"Question": "How do I track my order?", "Answer": "You can track your order via the Orders page in your account dashboard."},
         {"Question": "What is the return policy for wrong items?", "Answer": "Contact our support team within 7 days of delivery for returns on wrong items."},
@@ -232,7 +232,7 @@ def ensure_sample_csv(path: Path) -> bool:
         {"Question": "Do you offer international shipping?", "Answer": "Yes, we ship to over 50 countries worldwide with competitive international rates."},
         {"Question": "What payment methods do you accept?", "Answer": "We accept all major credit cards, PayPal, Apple Pay, Google Pay, and bank transfers."},
     ]
-    
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
         fh.write("Question,Answer\n")
@@ -240,10 +240,54 @@ def ensure_sample_csv(path: Path) -> bool:
             q = r["Question"].replace('"', '""')
             a = r["Answer"].replace('"', '""')
             fh.write(f'"{q}","{a}"\n')
-    
+
     return True
 
 created = ensure_sample_csv(CSV_PATH)
+
+# ---------------- Load Documents ----------------
+@st.cache_data(ttl=3600)
+def load_documents_from_csv(path: Path) -> List[Document]:
+    docs: List[Document] = []
+    if not path.exists():
+        return docs
+
+    import csv
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        headers = {h.lower(): h for h in (reader.fieldnames or [])}
+        q_col = headers.get("question")
+        a_col = headers.get("answer")
+
+        if not q_col or not a_col:
+            flds = reader.fieldnames or []
+            if len(flds) >= 2:
+                q_col, a_col = flds[0], flds[1]
+
+        for row in reader:
+            q = row.get(q_col, "").strip()
+            a = row.get(a_col, "").strip()
+            if q and a:
+                docs.append(
+                    Document(
+                        page_content=f"Q: {q}\nA: {a}",
+                        metadata={"source": str(path)}
+                    )
+                )
+    return docs
+
+# ---------------- Vector Database ----------------
+@st.cache_resource
+def get_or_build_vectordb():
+    docs = load_documents_from_csv(CSV_PATH)
+    if not docs:
+        return None
+
+    try:
+        return create_vectordb(docs, persist_path=PERSIST_PATH)
+    except Exception as e:
+        st.error(f"❌ Failed to build vector database: {e}")
+        return None
 
 # ---------------- Page Configuration ----------------
 st.set_page_config(
@@ -328,50 +372,6 @@ with st.sidebar:
             st.session_state.user_question = question
     
     st.markdown("</div>", unsafe_allow_html=True)
-
-# ---------------- Load Documents ----------------
-@st.cache_data(ttl=3600)
-def load_documents_from_csv(path: Path) -> List[Document]:
-    docs: List[Document] = []
-    if not path.exists():
-        return docs
-    
-    import csv
-    with path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        headers = {h.lower(): h for h in (reader.fieldnames or [])}
-        q_col = headers.get("question")
-        a_col = headers.get("answer")
-        
-        if not q_col or not a_col:
-            flds = reader.fieldnames or []
-            if len(flds) >= 2:
-                q_col, a_col = flds[0], flds[1]
-        
-        for row in reader:
-            q = row.get(q_col, "").strip()
-            a = row.get(a_col, "").strip()
-            if q and a:
-                docs.append(
-                    Document(
-                        page_content=f"Q: {q}\nA: {a}",
-                        metadata={"source": str(path)}
-                    )
-                )
-    return docs
-
-# ---------------- Vector Database ----------------
-@st.cache_resource
-def get_or_build_vectordb():
-    docs = load_documents_from_csv(CSV_PATH)
-    if not docs:
-        return None
-    
-    try:
-        return create_vectordb(docs, persist_path=PERSIST_PATH)
-    except Exception as e:
-        st.error(f"❌ Failed to build vector database: {e}")
-        return None
 
 vectordb = get_or_build_vectordb()
 
